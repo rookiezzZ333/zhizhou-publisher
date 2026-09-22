@@ -1,0 +1,68 @@
+<!doctype html><meta charset="utf-8">
+<!-- Local integration fixture, not a copy of WeChat's implementation. -->
+<textarea id="title" hidden></textarea>
+<div class="ProseMirror" contenteditable="true" data-placeholder="请在这里输入标题"><p><br class="ProseMirror-trailingBreak"></p></div>
+<input placeholder="请输入作者">
+<textarea placeholder="选填，不填写则默认抓取正文开头部分文字，摘要会在转发卡片和公众号会话展示。"></textarea>
+<div class="rich_media_content"><div class="ProseMirror" contenteditable="true"><p><br></p></div></div>
+<input id="body-upload" type="file" accept="image/*" hidden>
+<div id="js_cover_area"><button>拖拽或选择封面</button><input type="file" accept="image/*" hidden></div>
+<div id="menu" hidden><button>从正文选择</button><button>从本地选择</button></div>
+<script>
+(() => {
+const editor=document.querySelector('.rich_media_content .ProseMirror');
+const title=document.querySelector('[data-placeholder="请在这里输入标题"]');
+title.addEventListener('input',()=>{
+    const text=title.textContent;
+    const p=document.createElement('p');p.textContent=text;
+    const br=document.createElement('br');br.className='ProseMirror-trailingBreak';p.append(br);
+    title.replaceChildren(p);
+});
+title.addEventListener('keydown',e=>{if(e.key==='Tab'){e.preventDefault();title.append('\t')}});
+window.uploads=[];window.coverSelections=[];
+editor.addEventListener('paste', event=>{
+    event.preventDefault();
+    // Model the editor clipboard contract. Real ProseMirror parses into its own
+    // document; this fixture cannot certify WeChat's current schema or styles.
+    document.execCommand('insertHTML', false, event.clipboardData.getData('text/html'));
+});
+document.querySelector('#body-upload').addEventListener('change', event=>{
+    const name=event.target.files[0].name;
+    window.uploads.push(name);
+    const image=document.createElement('img');
+    image.src='https://mmbiz.qpic.cn/mmbiz_png/'+encodeURIComponent(name)+'/0';
+    const range=getSelection().getRangeAt(0);range.deleteContents();range.insertNode(image);
+});
+const cover=document.querySelector('#js_cover_area');
+cover.querySelector('button').onmouseenter=()=>document.querySelector('#menu').hidden=false;
+// A click after hover closes this variant's menu, reproducing the missed entry.
+cover.querySelector('button').onclick=()=>document.querySelector('#menu').hidden=true;
+document.querySelector('#menu button').onclick=()=>{
+    document.querySelector('#menu').hidden=true;
+    const dialog=document.createElement('div');dialog.className='weui-desktop-dialog';dialog.setAttribute('role','dialog');
+    for(const img of editor.querySelectorAll('img')){
+        const choice=img.cloneNode();
+        choice.onclick=()=>{dialog.dataset.chosen=choice.src;window.coverSelections.push(choice.src)};
+        dialog.append(choice);
+    }
+    const next=document.createElement('a');next.href='#';next.textContent='下一步';dialog.append(next);
+    next.onclick=()=>{
+        if(!dialog.dataset.chosen)return;
+        // Real dialogs may unmount between selection and crop. The next
+        // screen can reuse the same label with a different DOM node.
+        const chosen=dialog.dataset.chosen;
+        dialog.remove();
+        setTimeout(()=>{
+        const crop=document.createElement('div');crop.className='weui-desktop-dialog';
+        const done=document.createElement('a');done.href='#';done.textContent='确定';crop.append(done);
+        done.onclick=()=>{
+            const img=document.createElement('img');img.src=dialog.dataset.chosen;
+            cover.replaceChildren(img);crop.remove();
+        };
+        document.body.append(crop);
+        },200);
+    };
+    document.body.append(dialog);
+};
+})();
+</script>

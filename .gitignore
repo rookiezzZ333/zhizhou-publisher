@@ -1,0 +1,19 @@
+.venv/
+.state/
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+articles/
+outputs/
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# Local one-off migration helper
+/迁移到E盘.ps1
