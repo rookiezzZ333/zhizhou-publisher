@@ -1,3 +1,4 @@
+import sys
 import base64
 import hmac
 import json
@@ -16,12 +17,15 @@ from urllib.parse import parse_qs,quote,urlsplit
 from publisher.content import inside,load_bundle,render,IMAGE_TYPES,MAX_FILE
 from publisher.state import Store
 from publisher.douyin import Douyin
+from publisher.bilibili import Bilibili
+from publisher import video_api
 from publisher.wechat import WeChat,PlatformError,UncertainError
 from publisher.xiaohongshu import Xiaohongshu,LoginNeeded
 from publisher.wechat_browser import WeChatBrowser
 
 ROOT=Path(__file__).resolve().parent
 ARTICLES=ROOT/'articles';ARTICLES.mkdir(exist_ok=True)
+VIDEOS=ROOT/'videos';VIDEOS.mkdir(exist_ok=True)
 STATE=ROOT/'.state';STATE.mkdir(exist_ok=True)
 PORT=int(os.getenv('ZHIZHOU_PORT','8766'))
 TOKEN=secrets.token_urlsafe(32)
@@ -30,6 +34,9 @@ WX_POOL=ThreadPoolExecutor(max_workers=1,thread_name_prefix='wechat')
 XHS_POOL=ThreadPoolExecutor(max_workers=1,thread_name_prefix='xiaohongshu')
 XHS=Xiaohongshu(STATE)
 DY=Douyin(STATE)
+BILI=Bilibili(STATE)
+BILI_POOL=ThreadPoolExecutor(max_workers=1,thread_name_prefix='bilibili')
+BILI_LOGIN_STATE={'status':'idle','message':''}
 DY_POOL=ThreadPoolExecutor(max_workers=1,thread_name_prefix='douyin')
 DY_LOGIN_STATE={'status':'idle','message':''}
 WX_BROWSER=WeChatBrowser(STATE)
@@ -121,20 +128,21 @@ def run_job(bundle,platform,action,job,settings):
     try:
         if platform=='wechat':WeChat(settings).run(bundle,action,STORE,job)
         elif platform=='wechat_browser':WX_BROWSER.run(bundle,action,STORE,job)
+        elif platform=='bilibili':BILI.run(bundle,STORE,job,action=action)
         elif platform in ('douyin','douyin_video'):DY.run(bundle,STORE,job,action=action,video=platform=='douyin_video')
         else:XHS.run(bundle,STORE,job,action=action)
-    except LoginNeeded as e:STORE.update(id,'needs_login',str(e),screenshot=(WX_BROWSER if platform=='wechat_browser' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id))
-    except UncertainError as e:STORE.update(id,'uncertain',str(e),screenshot=(WX_BROWSER if platform=='wechat_browser' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id) if platform!='wechat' else None)
+    except LoginNeeded as e:STORE.update(id,'needs_login',str(e),screenshot=(WX_BROWSER if platform=='wechat_browser' else BILI if platform=='bilibili' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id))
+    except UncertainError as e:STORE.update(id,'uncertain',str(e),screenshot=(WX_BROWSER if platform=='wechat_browser' else BILI if platform=='bilibili' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id) if platform!='wechat' else None)
     except (PlatformError,ValueError) as e:
         previous=STORE.get(id)
         if previous['result'].get('publish_id'):
             STORE.update(id,'submitted','平台已受理，但本次查询失败；请点击查询结果，不要重发。')
-        else:STORE.update(id,'failed',str(e),screenshot=(WX_BROWSER if platform=='wechat_browser' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id) if platform!='wechat' else None)
+        else:STORE.update(id,'failed',str(e),screenshot=(WX_BROWSER if platform=='wechat_browser' else BILI if platform=='bilibili' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id) if platform!='wechat' else None)
     except Exception as exc:
         old=STORE.get(id)
         state='uncertain' if old['status'] in ('submitting','submitted') else 'failed'
         message=WX_BROWSER.interruption_message(exc) if platform=='wechat_browser' else '操作中断。请查看专用浏览器现场，可能是图片上传超时或页面变化；已有内容不会自动重填。'
-        STORE.update(id,state,message,screenshot=(WX_BROWSER if platform=='wechat_browser' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id) if platform!='wechat' else None)
+        STORE.update(id,state,message,screenshot=(WX_BROWSER if platform=='wechat_browser' else BILI if platform=='bilibili' else DY if platform in ('douyin','douyin_video') else XHS).screenshot(id) if platform!='wechat' else None)
 
 
 def login():
@@ -149,6 +157,13 @@ def dy_login():
     DY_LOGIN_STATE={'status':'opening','message':'正在打开抖音'}
     try:DY_LOGIN_STATE={'status':'ready',**DY.login()}
     except Exception:DY_LOGIN_STATE={'status':'failed','message':'抖音窗口打开失败，请检查专用浏览器。'}
+
+
+def bili_login():
+    global BILI_LOGIN_STATE
+    BILI_LOGIN_STATE={'status':'opening','message':'正在打开 B 站'}
+    try:BILI_LOGIN_STATE={'status':'ready',**BILI.login()}
+    except Exception:BILI_LOGIN_STATE={'status':'failed','message':'B 站窗口打开失败，请确认已安装 Edge 并关闭过期专用窗口后重试。'}
 
 
 def wx_login():
@@ -179,6 +194,10 @@ class Handler(BaseHTTPRequestHandler):
             if path in ('/static/app.js','/static/style.css'):
                 file=ROOT/'web'/Path(path).name
                 return self.send(file.read_bytes(),kind='text/javascript; charset=utf-8' if path.endswith('.js') else 'text/css; charset=utf-8')
+            if path=='/api/videos' or path.startswith('/api/videos/'):
+                media=bool(re.fullmatch(r'/api/videos/[^/]+/media',path))
+                if not (self.image_auth() if media else self.authorized()):return self.send({'error':'请刷新工作台'},403)
+                return video_api.get(self,sys.modules[__name__],url)
             if re.fullmatch(r'/api/articles/[^/]+/image',path):
                 if not self.image_auth():return self.send({'error':'请先打开工作台'},403)
                 from urllib.parse import unquote
@@ -218,7 +237,9 @@ class Handler(BaseHTTPRequestHandler):
                 for folder in sorted(ARTICLES.iterdir(),reverse=True):
                     if folder.is_dir() and not folder.is_symlink():
                         try:
-                            b=load_bundle(folder);result.append({'id':folder.name,'title':b['title'],'images':len(b['images']),'fingerprint':b['fingerprint'],'created_at':getattr(folder.stat(),'st_birthtime',folder.stat().st_ctime),'updated_at':(folder/'article.md').stat().st_mtime})
+                            b=load_bundle(folder)
+                            if b.get('library_hidden'):continue
+                            result.append({'id':folder.name,'title':b['title'],'images':len(b['images']),'cover_url':('/api/articles/'+quote(folder.name)+'/image?path='+quote(b['cover'],safe='')) if b['cover'] else '','fingerprint':b['fingerprint'],'created_at':getattr(folder.stat(),'st_birthtime',folder.stat().st_ctime),'updated_at':(folder/'article.md').stat().st_mtime})
                         except Exception:result.append({'id':folder.name,'title':folder.name,'error':'内容格式有误，请打开查看'})
                 return self.send(result)
             if path.startswith('/api/articles/'):
@@ -230,6 +251,7 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/login-status':return self.send(LOGIN_STATE)
             if path=='/api/wechat/browser-status':return self.send(WX_LOGIN_STATE)
             return self.send({'error':'不存在'},404)
+        except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):return
         except (ValueError,FileNotFoundError) as e:return self.send({'error':str(e)},400)
         except Exception:return self.send({'error':'读取失败，请检查文件格式'},500)
     def do_POST(self):
@@ -238,7 +260,9 @@ class Handler(BaseHTTPRequestHandler):
         if origin and origin not in (f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'):return self.send({'error':'来源无效'},403)
         try:
             length=int(self.headers.get('Content-Length','0'))
-            if not 0<length<=(500 if self.path.startswith('/api/video-upload/') else 112)*1024*1024:raise ValueError('请求过大或为空')
+            if not 0<length<=(500 if self.path.startswith('/api/video-upload/') or re.fullmatch(r'/api/videos/[^/]+/(upload|cover)',self.path) else 112)*1024*1024:raise ValueError('请求过大或为空')
+            if re.fullmatch(r'/api/videos/[^/]+/(upload|cover)',self.path):
+                return video_api.upload(self,sys.modules[__name__],length)
             if self.path.startswith('/api/video-upload/'):
                 from publisher.metadata import update_metadata
                 from urllib.parse import unquote
@@ -267,6 +291,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send(public_bundle(load_bundle(folder)))
             data=json.loads(self.rfile.read(length))
             if not isinstance(data,dict):raise ValueError('请求格式无效')
+            if self.path.startswith('/api/videos/'):return video_api.post(self,sys.modules[__name__],data)
             if self.path=='/api/import':return self.send(import_bundle(data))
             if self.path=='/api/jobs/delete':
                 if data.get('confirmed') is not True:raise ValueError('请确认删除记录')
@@ -383,6 +408,8 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     server=ThreadingHTTPServer(('127.0.0.1',PORT),Handler)
     STORE=Store(STATE)
+    from publisher.video import migrate_legacy
+    migrate_legacy(ARTICLES,VIDEOS,STATE,STORE)
     print(f'Zhizhou Publisher: http://127.0.0.1:{PORT}',flush=True)
     try:server.serve_forever()
     except KeyboardInterrupt:pass

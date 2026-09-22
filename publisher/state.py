@@ -57,7 +57,7 @@ class Store:
         return {'ok':True}
     def resume_editor(self,id):
         with self.lock,self.db() as db:
-            changed=db.execute("UPDATE jobs SET status='running',message='正在打开已有编辑器',updated=? WHERE id=? AND platform IN ('douyin','douyin_video','xiaohongshu','wechat_browser') AND action='prepare' AND status='editor_ready'",(now(),id)).rowcount
+            changed=db.execute("UPDATE jobs SET status='running',message='正在打开已有编辑器',updated=? WHERE id=? AND platform IN ('douyin','douyin_video','bilibili','xiaohongshu','wechat_browser') AND action='prepare' AND status='editor_ready'",(now(),id)).rowcount
         return bool(changed)
     def decode(self,row):
         data=dict(row);data['result']=json.loads(data['result'] or '{}');return data

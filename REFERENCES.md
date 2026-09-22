@@ -12,3 +12,4 @@
 
 - [微信文章结构规范与检测器](https://github.com/wechatjs/verify-article-structure-spec)，提交 `fa69e37341c86bfec4c8c533845910511e534c0c`，CLI 版本 0.2.16。读取规范的行高、行内容器、字体章节，并实际构建运行浏览器检测引擎；引擎只用于本地 QA，不修改或屏蔽其检测规则。
 - [doocs/md 导出实现](https://github.com/doocs/md/blob/cbcd3756e55d4982a37ff451753a69ce822e7a58/apps/web/src/services/export/clipboard.ts)：参考 Markdown 渲染后还需整理 HTML 结构、内联样式并通过富文本剪贴板输出的处理流程；未引入其完整应用或直接复制实现。
+\n## 0.7 B 站视频（2026-09-22）\n\n字段用途参考 [B 站创作中心网页投稿说明](https://www.bilibili.com/opus/127210875404901820) 与 [内容标识公告](https://www.bilibili.com/opus/840812291428450327)。浏览器表单适配为本项目独立实现，当前通过本地模拟页测试，真实账号兼容性待验证。未引入 Cookie 提取或私有投稿 API。\n

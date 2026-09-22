@@ -17,3 +17,6 @@ outputs/
 Thumbs.db
 # Local one-off migration helper
 /迁移到E盘.ps1
+
+# Independent personal video library
+/videos/

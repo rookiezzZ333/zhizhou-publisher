@@ -171,6 +171,7 @@ def load_bundle(folder):
         with inside(folder,ref).open('rb') as stream:
             for chunk in iter(lambda:stream.read(1024*1024),b''):digest.update(chunk)
     result['fingerprint']=digest.hexdigest()
+    result['library_hidden']=meta.get('library_hidden',False) is True
     return result
 
 
