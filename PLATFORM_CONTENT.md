@@ -1,4 +1,6 @@
-> **0.7 更新：** 抖音视频和 B 站视频已迁到独立 videos/ 内容库，入口在左侧「视频作品」。以下 douyin-video.md / article.md 配置是旧版兼容格式，新建视频请看 [独立视频库](VIDEO_LIBRARY.md)。\n\n# 各平台独立内容
+> **0.7 更新：** 抖音视频和 B 站视频已迁到独立 videos/ 内容库，入口在左侧「视频作品」。以下 douyin-video.md / article.md 配置是旧版兼容格式，新建视频请看 [独立视频库](VIDEO_LIBRARY.md)。
+
+# 各平台独立内容
 
 公众号继续使用 `article.md` 和 `images/`。小红书正文使用 `xiaohongshu.md`，抖音图文正文使用 `douyin.md`。独立短文的首行 `# 标题` 是该平台标题。
 
