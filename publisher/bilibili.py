@@ -12,13 +12,23 @@ class Bilibili(Xiaohongshu):
     def login(self):
         page=self.browser();page.goto(URL,wait_until='domcontentloaded',timeout=45000);page.bring_to_front()
         return {'message':'已打开 B 站专用窗口，请登录并确认投稿账号。'}
-    def scope(self,page):
-        # Some creator versions embed the upload form in an iframe.
+    def video_inputs(self,scope):
+        return [item for item in scope.locator('input[type=file]').all()
+                if not item.is_disabled() and any(value in (item.get_attribute('accept') or '').lower()
+                for value in ('video','.mp4'))]
+    def upload_target(self,page):
+        # Bilibili mounts a hidden legacy picker beside the active visible picker.
+        # Inspect all frames and prefer the unique visible video input. Never pick
+        # the first duplicate or the unrelated .txt subtitle input.
         scopes=[page]+[f for f in page.frames if f!=page.main_frame]
-        for scope in scopes:
-            inputs=scope.locator('input[type=file]').all()
-            if any(any(v in (x.get_attribute('accept') or '').lower() for v in ('video','.mp4')) for x in inputs):return scope
-        return page
+        candidates=[(scope,item) for scope in scopes for item in self.video_inputs(scope)]
+        visible=[entry for entry in candidates if entry[1].is_visible()]
+        if len(visible)==1:return visible[0]
+        if not visible and len(candidates)==1:return candidates[0]
+        return None
+    def scope(self,page):
+        target=self.upload_target(page)
+        return target[0] if target else page
     def unique(self,scope,selector,label,timeout=20000):
         items=scope.locator(selector).filter(visible=True)
         items.first.wait_for(state='visible',timeout=timeout)
@@ -60,15 +70,15 @@ class Bilibili(Xiaohongshu):
             import time
             deadline=time.monotonic()+20
             while True:
-                scope=self.scope(page)
-                inputs=scope.locator('input[type=file]')
-                choices=[x for x in inputs.all() if any(v in (x.get_attribute('accept') or '').lower() for v in ('video','.mp4'))]
-                if len(choices)==1:break
+                target=self.upload_target(page)
+                if target:
+                    scope,picker=target
+                    break
                 if time.monotonic()>deadline:raise PlatformError('未找到唯一的 B 站视频入口，请检查登录状态与投稿页面')
                 page.wait_for_timeout(250)
             store.update(job['id'],'running','正在向 B 站提交视频文件，请等待上传')
             self.step='上传视频'
-            choices[0].set_input_files(str(inside(Path(bundle['folder']),bundle['video'])))
+            picker.set_input_files(str(inside(Path(bundle['folder']),bundle['video'])))
             self.step='填写标题、简介与标签'
             self.fill_form(scope,bundle)
             self.prepared={'page':page,'fingerprint':bundle['fingerprint'],'url':page.url}

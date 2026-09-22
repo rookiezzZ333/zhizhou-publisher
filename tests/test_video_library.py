@@ -84,7 +84,7 @@ class BilibiliTests(unittest.TestCase):
         from publisher.bilibili import Bilibili
         with tempfile.TemporaryDirectory() as tmp,sync_playwright() as pw:
             browser=pw.chromium.launch(channel='msedge',headless=True);page=browser.new_page()
-            html="""<meta charset="utf-8"><input type=file accept="video/*"><input placeholder="标题"><textarea placeholder="简介"></textarea><input placeholder="标签"><div id=tags></div><button onclick="window.published=true">立即投稿</button>
+            html="""<meta charset="utf-8"><input id=legacy type=file accept=".mp4,.mov" style="display:none"><input id=active type=file accept=".mp4,.mov"><input type=file accept=".txt"><input placeholder="标题"><textarea placeholder="简介"></textarea><input placeholder="标签"><div id=tags></div><button onclick="window.published=true">立即投稿</button>
 <script>document.querySelector('[placeholder=标签]').onkeydown=e=>{if(e.key==='Enter'){const s=document.createElement('span');s.className='tag-item';s.textContent=e.target.value;document.querySelector('#tags').append(s);e.target.value='';}};</script>"""
             page.route('https://member.bilibili.com/**',lambda route:route.fulfill(body=html,content_type='text/html'))
             folder=Path(tmp);(folder/'clip.mp4').write_bytes(MP4)
@@ -93,6 +93,8 @@ class BilibiliTests(unittest.TestCase):
             store=Mock();adapter.run(b,store,{'id':'a'*32})
             self.assertEqual(page.locator('[placeholder=标题]').input_value(),'B 站独立标题')
             self.assertEqual(page.locator('.tag-item').all_text_contents(),['动画','设计'])
+            self.assertEqual(page.locator('#active').evaluate('el=>el.files.length'),1)
+            self.assertEqual(page.locator('#legacy').evaluate('el=>el.files.length'),0)
             self.assertIsNone(page.evaluate('window.published'));self.assertEqual(store.update.call_args.args[1],'editor_ready')
             page.locator('[placeholder=标题]').fill('用户正在编辑');adapter.run(b,store,{'id':'a'*32})
             self.assertEqual(page.locator('[placeholder=标题]').input_value(),'用户正在编辑');browser.close()
@@ -112,4 +114,15 @@ class BilibiliTests(unittest.TestCase):
             bundle={'video':'clip.mp4','copies':{'bilibili':{'title':'新标题','body':'新简介'}},'bilibili_tags':[]}
             with self.assertRaises(PlatformError):adapter.fill_form(scope,bundle)
             self.assertEqual(scope.locator('textarea').input_value(),'正文')
+            browser.close()
+
+    def test_multiple_visible_video_pickers_are_not_guessed(self):
+        from playwright.sync_api import sync_playwright
+        from publisher.bilibili import Bilibili
+        with tempfile.TemporaryDirectory() as tmp,sync_playwright() as pw:
+            browser=pw.chromium.launch(channel='msedge',headless=True);page=browser.new_page()
+            page.set_content('<input type=file accept=".mp4"><input type=file accept="video/*">')
+            self.assertIsNone(Bilibili(Path(tmp)).upload_target(page))
+            page.set_content('<input type=file accept=".mp4" style="display:none"><input type=file accept=".txt">')
+            self.assertIsNotNone(Bilibili(Path(tmp)).upload_target(page))
             browser.close()
