@@ -50,7 +50,7 @@ class Bilibili(Xiaohongshu):
             field=self.unique(scope,'input[placeholder*="标签"],input[placeholder*="按回车"]','标签')
             for tag in tags:
                 # Avoid toggling an existing selected tag.
-                selected=scope.locator('.tag-item,.tag-pre-item,[data-tag]').filter(has_text=re.compile('^'+re.escape(tag)+'$'))
+                selected=scope.locator('.tag-item,.tag-pre-item,[data-tag]').filter(has_text=re.compile('^'+re.escape(tag)+r'\s*[×x✕]?$'))
                 if selected.count():continue
                 field.fill(tag);field.press('Enter')
                 selected.first.wait_for(state='visible',timeout=5000)
@@ -78,10 +78,26 @@ class Bilibili(Xiaohongshu):
                 page.wait_for_timeout(250)
             store.update(job['id'],'running','正在向 B 站提交视频文件，请等待上传')
             self.step='上传视频'
-            picker.set_input_files(str(inside(Path(bundle['folder']),bundle['video'])))
+            file=str(inside(Path(bundle['folder']),bundle['video']))
+            buttons=scope.get_by_text('上传视频',exact=True).filter(visible=True)
+            if buttons.count()==1:
+                # Use the control's actual file chooser: a visible file input can
+                # be an inert duplicate while the button owns a hidden uploader.
+                with page.expect_file_chooser(timeout=15000) as opened:
+                    buttons.click(force=True)
+                chooser=opened.value
+                accept=(chooser.element.get_attribute('accept') or '').lower()
+                if not any(v in accept for v in ('video','.mp4')):raise PlatformError('B 站按钮未打开视频选择器，已停止')
+                chooser.set_files(file)
+            elif buttons.count()>1:
+                raise PlatformError('B 站上传视频按钮不唯一，已停止')
+            else:
+                picker.set_input_files(file)
+            store.update(job['id'],'running','视频已选择，正在等待 B 站上传表单出现')
             self.step='填写标题、简介与标签'
             self.fill_form(scope,bundle)
             self.prepared={'page':page,'fingerprint':bundle['fingerprint'],'url':page.url}
             return store.update(job['id'],'editor_ready','视频已交给 B 站上传控件，标题、简介和标签已填入；请等待上传转码，并手动核对封面、分区、创作类型、转载来源和声明后投稿。',screenshot=self.screenshot(job['id']))
         except PlatformError:raise
-        except Exception as exc:raise PlatformError('B 站在「'+self.step+'」中断（'+type(exc).__name__+'）；未投稿，请保留页面检查。') from None
+        except Exception as exc:
+            raise PlatformError('B 站在「'+self.step+'」中断（'+type(exc).__name__+'）；未投稿，请保留页面检查。') from None
